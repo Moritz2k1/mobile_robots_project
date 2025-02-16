@@ -1,6 +1,7 @@
 import rosbag
 import math
 import torch
+import os
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.dates import date2num
@@ -51,6 +52,11 @@ def compute_data(starting_position, imu_msgs, odom_timestamps):
     imu_y_list = []
     imu_heading_list = []
 
+    angular_velocity_z_list = []
+    linear_acceleration_x_list = []
+    linear_acceleration_y_list = []
+
+
     # Compute IMU-based trajectory
     for t, msg in imu_msgs:
         msg_sec = t.to_sec()
@@ -61,6 +67,10 @@ def compute_data(starting_position, imu_msgs, odom_timestamps):
         angular_velocity_z = msg.angular_velocity.z
         linear_acceleration_x = msg.linear_acceleration.x
         linear_acceleration_y = msg.linear_acceleration.y
+
+        angular_velocity_z_list.append(angular_velocity_z)
+        linear_acceleration_x_list.append(linear_acceleration_x)
+        linear_acceleration_y_list.append(linear_acceleration_y)
 
         current_heading += angular_velocity_z * dt
 
@@ -89,15 +99,26 @@ def compute_data(starting_position, imu_msgs, odom_timestamps):
     interp_x = interp1d(imu_time_np, imu_x_np, kind='linear', fill_value="extrapolate")
     interp_y = interp1d(imu_time_np, imu_y_np, kind='linear', fill_value="extrapolate")
     interp_heading = interp1d(imu_time_np, imu_heading_np, kind='linear', fill_value="extrapolate")
+    
+    interp_imu_angular = interp1d(imu_time_np, angular_velocity_z_list, kind='linear', fill_value="extrapolate")
+    interp_imu_x = interp1d(imu_time_np, linear_acceleration_x_list, kind='linear', fill_value="extrapolate")
+    interp_imu_y = interp1d(imu_time_np, linear_acceleration_y_list, kind='linear', fill_value="extrapolate")
 
     # Interpolate IMU data at odom timestamps
+    angular_velocity_z_interp = []
+    linear_acceleration_x_interp = []
+    linear_acceleration_y_interp = []
     for odom_time in odom_timestamps:
         odom_time_sec = odom_time.timestamp()  # Convert datetime to seconds
         x_values_IMU.append(interp_x(odom_time_sec))
         y_values_IMU.append(interp_y(odom_time_sec))
         heading_values_IMU.append(interp_heading(odom_time_sec))
 
-    return x_values_IMU, y_values_IMU, heading_values_IMU
+        angular_velocity_z_interp.append(interp_imu_angular(odom_time_sec))
+        linear_acceleration_x_interp.append(interp_imu_x(odom_time_sec))
+        linear_acceleration_y_interp.append(interp_imu_y(odom_time_sec))
+
+    return x_values_IMU, y_values_IMU, heading_values_IMU, angular_velocity_z_interp, linear_acceleration_x_interp, linear_acceleration_y_interp
 
 
 
@@ -134,10 +155,11 @@ def plot_data(time_stamps, x_values, y_values, heading_values, filename):
     plt.close()
 
 
-def prepare_data(odom_gt, imu_pred, seq_length):
+def prepare_data(odom_gt, imu_pred, imu, seq_length):
     gt_set, pred_set = [], []
     x_pred, y_pred, yaw_pred = imu_pred
     x_gt_set, y_gt_set, yaw_gt_set = odom_gt
+    x_imu, y_imu, yaw_imu = imu
     num_samples = len(x_gt_set)
 
     for i in range(num_samples - seq_length + 1):  # Ensure full sequence extraction
@@ -146,8 +168,12 @@ def prepare_data(odom_gt, imu_pred, seq_length):
         y = y_pred[i:i+seq_length]
         yaw = yaw_pred[i:i+seq_length]
 
+        x_val_imu = x_imu[i:i+seq_length]
+        y_val_imu = y_imu[i:i+seq_length]
+        yaw_val_imu = yaw_imu[i:i+seq_length]
+
         # Stack predictions into shape (seq_length, 3)
-        pred_window = np.stack([x, y, yaw], axis=-1)  # Shape: (seq_length, 3)
+        pred_window = np.stack([x, y, yaw], axis=-1)  # Shape: (seq_length, 6)
         pred_set.append(pred_window)
 
         # Ground truth at index `i + seq_length - 1`
@@ -158,49 +184,61 @@ def prepare_data(odom_gt, imu_pred, seq_length):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Plot x, y, and heading data from a ROS bag file.")
-    parser.add_argument('bag', type=str, help="Path to the ROS bag file.")
+    parser.add_argument('bag_folder', type=str, help="Path to the ROS bag folder.")
     parser.add_argument('model', type=str, default=None, nargs='?', help="Path to the model file.") # optional
     args = parser.parse_args()
 
-    bag_file_path = args.bag
+    BAG_FOLDER_PATH = args.bag_folder
     MODEL = args.model
 
+    seq_length = 10
+    all_time_stamps = []
+    all_gt_x, all_gt_y, all_gt_yaw = [], [], []
+    all_imu_x, all_imu_y, all_imu_yaw = [], [], []
+    all_x, all_y = [], []
+
     print("Extracting data from the bag file...")
-    time_stamps, x_gt, y_gt, yaw_gt, imu_msgs = extract_data(bag_file_path)
-    starting_position = {'x': x_gt[0], 'y': y_gt[0], 'heading': yaw_gt[0]}
+    for bag_file_path in os.listdir(BAG_FOLDER_PATH):
+        if not bag_file_path.endswith('.bag'):
+            continue
+        print(f"Processing {bag_file_path}...")
+        time_stamps, x_gt, y_gt, yaw_gt, imu_msgs = extract_data(os.path.join(BAG_FOLDER_PATH, bag_file_path))
+        all_time_stamps.append(time_stamps)
+        all_gt_x.append(x_gt)
+        all_gt_y.append(y_gt)
+        all_gt_yaw.append(yaw_gt)
+        starting_position = {'x': x_gt[0], 'y': y_gt[0], 'heading': yaw_gt[0]}
+        x_pred_imu, y_pred_imu, yaw_pred_imu, yaw_imu, x_imu, y_imu = compute_data(starting_position, imu_msgs, time_stamps)
+
+        all_imu_x.append(x_pred_imu)
+        all_imu_y.append(y_pred_imu)
+        all_imu_yaw.append(yaw_pred_imu)
+
+        x, y = prepare_data(
+            odom_gt=(x_gt, y_gt, yaw_gt),
+            imu_pred=(x_pred_imu, y_pred_imu, yaw_pred_imu),
+            imu=(x_imu, y_imu, yaw_imu),
+            seq_length=seq_length
+        )
+
+        dataX = Variable(torch.Tensor(np.array(x))).to('cuda')
+        dataY = Variable(torch.Tensor(np.array(y))).to('cuda')
+
+        all_x.append(dataX)
+        all_y.append(dataY)
+
+    # Combine datasets from all bags
     
-    print("Computing position data based on IMU sensors...")
-    x_pred_imu, y_prend_imu, yaw_pred_imu = compute_data(starting_position, imu_msgs, time_stamps)
 
-    print("Creating the dataset...")
-    seq_length = 50
-    x, y = prepare_data(
-        odom_gt=(x_gt, y_gt, yaw_gt), 
-        imu_pred=(x_pred_imu, y_prend_imu, yaw_pred_imu),
-        seq_length=seq_length
-    )
-
-    train_size = int(len(y) * 0.67)
-    test_size = len(y) - train_size
-
-    # tensor must be in the form of (batch, seq, feature)
-
-    dataX = Variable(torch.Tensor(np.array(x))).to('cuda')
-    dataY = Variable(torch.Tensor(np.array(y))).to('cuda')
-
-    trainX = Variable(torch.Tensor(np.array(x[0:train_size]))).to('cuda')
-    trainY = Variable(torch.Tensor(np.array(y[0:train_size]))).to('cuda')
-
-    testX = Variable(torch.Tensor(np.array(x[0:len(x)]))).to('cuda')
-    testY = Variable(torch.Tensor(np.array(y[0:len(y)]))).to('cuda')
+    train_size = int(len(dataY) * 0.67)
 
     # training
-
+    num_iterations = 6
     num_epochs = 4000
     learning_rate = 0.008
 
     input_size = 3
-    hidden_size = 20
+    hidden_size = 3
     num_layers = 1
 
     output_size = 3
@@ -213,14 +251,21 @@ if __name__ == '__main__':
 
     if not MODEL:
         print("training the model...")
-        lstm.train_loop(num_epochs, trainX, trainY, optimizer, criterion)
+        for _ in range(num_iterations):
+            for dataX, dataY in zip(all_x, all_y):
+                # trainX, trainY = dataX[:train_size], dataY[:train_size]
+                lstm.train_loop(num_epochs, dataX, dataY, optimizer, criterion)
         torch.save(lstm.state_dict(), 'model.pth')
+        print("Training complete!")
     else:
         lstm.load_state_dict(torch.load(MODEL))
 
     # testing
     print("testing the model...")
-    results = lstm.test_loop(testX, testY, train_size, criterion)
+    all_results = []
+    for dataX, dataY in zip(all_x, all_y):
+        results = lstm.test_loop(dataX, dataY, criterion)
+        all_results.append(results)
 
     x_pred, y_pred, yaw_pred = [], [], []
     for i in range(len(results)):
@@ -234,47 +279,23 @@ if __name__ == '__main__':
     y_pred = np.pad(y_pred, (seq_length - 1, 0), 'edge')
     yaw_pred = np.pad(yaw_pred, (seq_length - 1, 0), 'edge')
 
-    plot_data(time_stamps, [x_gt, x_pred_imu, x_pred], [y_gt, y_prend_imu, y_pred], [yaw_gt, yaw_pred_imu, yaw_pred], 'output.png')
-    exit()
-    
-    delta_list = []
-    for epoch in range(num_epochs):
+    start_idx = 0
+    for i, (x_gt, y_gt, yaw_gt, x_pred_imu, y_prend_imu, yaw_pred_imu, time_stamps, results) in enumerate(zip(all_gt_x, all_gt_y, all_gt_yaw, all_imu_x, all_imu_y, all_imu_yaw, all_time_stamps, all_results)):
+        # Number of results corresponding to this bag
+        num_samples = len(x_gt) - seq_length + 1
+
+        # Extract model predictions for this bag
         x_pred, y_pred, yaw_pred = [], [], []
-        for gt_odom, pred_window in dataset:
-
-            gt_odom = gt_odom.to('cuda')
-            pred_window = pred_window.to('cuda')
-
-
-            outputs = lstm(pred_window)
-            optimizer.zero_grad()
-
-            # obtain the loss function
-            loss = criterion(outputs, gt_odom)
-
-            loss.backward()
-
-            optimizer.step()
-
-            x, y, yaw = [float(x) for x in outputs[0]]
+        for j in range(len(results)):
+            x, y, yaw = [float(val) for val in results[j]]
             x_pred.append(x)
             y_pred.append(y)
             yaw_pred.append(yaw)
 
-        #if epoch % 10 == 0:
-            # x_gt, y_gt, yaw_gt = [float(x) for x in gt_odom_tensor[0]]
-            # delta_x = abs(x - x_gt)
-            # delta_y = abs(y - y_gt)
-            # delta_yaw = abs(yaw - yaw_gt)
-            # delta_list.append((delta_x, delta_y, delta_yaw))
-            # print("Epoch: %d, loss: %1.5f, delta_x: %f, delta_y: %f, delta_yaw: %f" % (epoch, loss.item(), delta_x, delta_y, delta_yaw))
-        print("Epoch: %d, loss: %1.5f" % (epoch, loss.item()))
-
-        # remove the additional zeros
-        x_pred = x_pred[:len(x_gt)]
-        y_pred = y_pred[:len(y_gt)]
-        yaw_pred = yaw_pred[:len(yaw_gt)]
-
-        plot_data(time_stamps, [x_gt, x_pred_imu, x_pred], [y_gt, y_prend_imu, y_pred], [yaw_gt, yaw_pred_imu, yaw_pred], 'output.png')
-    
-    print("Training complete!")
+        # Pad predictions to align with original timestamps
+        x_pred = np.pad(x_pred, (seq_length - 1, 0), 'edge')
+        y_pred = np.pad(y_pred, (seq_length - 1, 0), 'edge')
+        yaw_pred = np.pad(yaw_pred, (seq_length - 1, 0), 'edge')
+        
+        plot_data(time_stamps, [x_gt, x_pred_imu, x_pred], [y_gt, y_prend_imu, y_pred], [yaw_gt, yaw_pred_imu, yaw_pred], 'output_' + str(i) + '.png')
+        start_idx += num_samples

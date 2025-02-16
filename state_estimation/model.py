@@ -42,14 +42,14 @@ class LSTM(nn.Module):
             loss.backward()
 
             optimizer.step()
-            if True:
+            if epoch % 100 == 0:
                 # delta = sum(abs(outputs - trainY)).item()
                 # delta_list.append(delta)
                 # print("Epoch: %d, loss: %1.5f, delta: %f" % (epoch, loss.item(), delta))
                 print("Epoch: %d, loss: %1.5f" % (epoch, loss.item()))
         # print("Median delta: %f" % (np.median(delta_list)))
 
-    def test_loop(self, dataX, dataY, train_size, criterion):
+    def test_loop(self, dataX, dataY, criterion):
         # set model to evaluation mode
         self.eval()
 
