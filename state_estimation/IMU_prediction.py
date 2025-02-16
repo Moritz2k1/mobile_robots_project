@@ -134,34 +134,36 @@ def plot_data(time_stamps, x_values, y_values, heading_values, filename):
     plt.close()
 
 
-# prepare the data and create a windows for the x value of the model
 def prepare_data(odom_gt, imu_pred, seq_length):
-    dataset = []
+    gt_set, pred_set = [], []
     x_pred, y_pred, yaw_pred = imu_pred
-    i = 0
-    last_x, last_y, last_yaw = x_pred[-1], y_pred[-1], yaw_pred[-1]
-    for (x_gt, y_gt, yaw_gt) in odom_gt:
-        if i + seq_length >= len(x_pred):
-            x = x_pred[i:]
-            y = y_pred[i:]
-            yaw = yaw_pred[i:]
-        else:
-            x = x_pred[i:i+seq_length]
-            y = y_pred[i:i+seq_length]
-            yaw = yaw_pred[i:i+seq_length]
-        gt = Variable(torch.tensor(np.array((x_gt, y_gt, yaw_gt)), dtype=torch.float32).unsqueeze(0))
-        pred_tensor = torch.tensor(np.array((x, y, yaw)), dtype=torch.float32).unsqueeze(0)
-        pred_tensor = pred_tensor.permute(0, 2, 1)
-        dataset.append((gt, Variable(pred_tensor)))
-        i += 1
-    return dataset
+    x_gt_set, y_gt_set, yaw_gt_set = odom_gt
+    num_samples = len(x_gt_set)
+
+    for i in range(num_samples - seq_length + 1):  # Ensure full sequence extraction
+        # Extract prediction window
+        x = x_pred[i:i+seq_length]
+        y = y_pred[i:i+seq_length]
+        yaw = yaw_pred[i:i+seq_length]
+
+        # Stack predictions into shape (seq_length, 3)
+        pred_window = np.stack([x, y, yaw], axis=-1)  # Shape: (seq_length, 3)
+        pred_set.append(pred_window)
+
+        # Ground truth at index `i + seq_length - 1`
+        x_gt, y_gt, yaw_gt = x_gt_set[i + seq_length - 1], y_gt_set[i + seq_length - 1], yaw_gt_set[i + seq_length - 1]
+        gt_set.append([x_gt, y_gt, yaw_gt])  # Shape: (3,)
+
+    return np.stack(pred_set), np.array(gt_set)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Plot x, y, and heading data from a ROS bag file.")
     parser.add_argument('bag', type=str, help="Path to the ROS bag file.")
+    parser.add_argument('model', type=str, default=None, nargs='?', help="Path to the model file.") # optional
     args = parser.parse_args()
 
     bag_file_path = args.bag
+    MODEL = args.model
 
     print("Extracting data from the bag file...")
     time_stamps, x_gt, y_gt, yaw_gt, imu_msgs = extract_data(bag_file_path)
@@ -170,21 +172,35 @@ if __name__ == '__main__':
     print("Computing position data based on IMU sensors...")
     x_pred_imu, y_prend_imu, yaw_pred_imu = compute_data(starting_position, imu_msgs, time_stamps)
 
-    print("training the model...")
+    print("Creating the dataset...")
     seq_length = 50
-    dataset = prepare_data(
-        odom_gt=zip(x_gt, y_gt, yaw_gt), 
+    x, y = prepare_data(
+        odom_gt=(x_gt, y_gt, yaw_gt), 
         imu_pred=(x_pred_imu, y_prend_imu, yaw_pred_imu),
         seq_length=seq_length
     )
 
+    train_size = int(len(y) * 0.67)
+    test_size = len(y) - train_size
+
+    # tensor must be in the form of (batch, seq, feature)
+
+    dataX = Variable(torch.Tensor(np.array(x))).to('cuda')
+    dataY = Variable(torch.Tensor(np.array(y))).to('cuda')
+
+    trainX = Variable(torch.Tensor(np.array(x[0:train_size]))).to('cuda')
+    trainY = Variable(torch.Tensor(np.array(y[0:train_size]))).to('cuda')
+
+    testX = Variable(torch.Tensor(np.array(x[0:len(x)]))).to('cuda')
+    testY = Variable(torch.Tensor(np.array(y[0:len(y)]))).to('cuda')
+
     # training
 
-    num_epochs = 1
+    num_epochs = 4000
     learning_rate = 0.008
 
     input_size = 3
-    hidden_size = 5
+    hidden_size = 20
     num_layers = 1
 
     output_size = 3
@@ -194,6 +210,32 @@ if __name__ == '__main__':
 
     criterion = torch.nn.MSELoss(reduction='sum')
     optimizer = torch.optim.Adam(lstm.parameters(), lr=learning_rate)
+
+    if not MODEL:
+        print("training the model...")
+        lstm.train_loop(num_epochs, trainX, trainY, optimizer, criterion)
+        torch.save(lstm.state_dict(), 'model.pth')
+    else:
+        lstm.load_state_dict(torch.load(MODEL))
+
+    # testing
+    print("testing the model...")
+    results = lstm.test_loop(testX, testY, train_size, criterion)
+
+    x_pred, y_pred, yaw_pred = [], [], []
+    for i in range(len(results)):
+        x, y, yaw = [float(x) for x in results[i]]
+        x_pred.append(x)
+        y_pred.append(y)
+        yaw_pred.append(yaw)
+    
+    # padd with last value at start
+    x_pred = np.pad(x_pred, (seq_length - 1, 0), 'edge')
+    y_pred = np.pad(y_pred, (seq_length - 1, 0), 'edge')
+    yaw_pred = np.pad(yaw_pred, (seq_length - 1, 0), 'edge')
+
+    plot_data(time_stamps, [x_gt, x_pred_imu, x_pred], [y_gt, y_prend_imu, y_pred], [yaw_gt, yaw_pred_imu, yaw_pred], 'output.png')
+    exit()
     
     delta_list = []
     for epoch in range(num_epochs):

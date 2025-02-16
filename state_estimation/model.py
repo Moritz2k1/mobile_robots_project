@@ -29,15 +29,36 @@ class LSTM(nn.Module):
         out = self.fc(h_out)
 
         return out
+    
+    def train_loop(self, num_epochs, trainX, trainY, optimizer, criterion):
+        delta_list = []
+        for epoch in range(num_epochs):
+            outputs = self.forward(trainX)
+            optimizer.zero_grad()
 
-    def test(self, dataX, dataY, train_size, criterion):
-        # # set model to evaluation mode
-        # self.eval()
+            # obtain the loss function
+            loss = criterion(outputs, trainY)
+
+            loss.backward()
+
+            optimizer.step()
+            if True:
+                # delta = sum(abs(outputs - trainY)).item()
+                # delta_list.append(delta)
+                # print("Epoch: %d, loss: %1.5f, delta: %f" % (epoch, loss.item(), delta))
+                print("Epoch: %d, loss: %1.5f" % (epoch, loss.item()))
+        # print("Median delta: %f" % (np.median(delta_list)))
+
+    def test_loop(self, dataX, dataY, train_size, criterion):
+        # set model to evaluation mode
+        self.eval()
 
         train_predict = self.forward(dataX)
         mserror = criterion(train_predict, dataY)
         print("MSE for val data: %1.5f" % (mserror.item()))
-        print("Delta for val data: %f" % (sum(abs(train_predict - dataY))))
+        #print("Delta for val data: %f" % (sum(abs(train_predict - dataY))))
+
+        return train_predict
 
         data_predict = train_predict.data.numpy()
         dataY_plot = dataY.data.numpy()
