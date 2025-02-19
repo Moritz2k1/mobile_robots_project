@@ -1,75 +1,56 @@
-from torch import nn
+from torch import nn, split, cat
 import numpy as np
 from matplotlib import pyplot as plt
 
 class LSTM(nn.Module):
 
-    def __init__(self, output_size, input_size, hidden_size, num_layers):
+    def __init__(self, hidden_size, num_layers):
         super(LSTM, self).__init__()
 
-        self.output_size = output_size
-        self.input_size = input_size
-        self.num_layers = num_layers
         self.hidden_size = hidden_size
 
-        self.lstm = nn.LSTM(
-            input_size=input_size,
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            batch_first=True
-        )
-
-        self.fc = nn.Linear(hidden_size, output_size)
+        self.lstm_x = nn.ModuleDict({
+            'lstm': nn.LSTM(
+                input_size=1,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True
+            ),
+            'linear': nn.Linear(hidden_size, 1)
+        })
+        self.lstm_y = nn.ModuleDict({
+            'lstm': nn.LSTM(
+                input_size=1,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True
+            ),
+            'linear': nn.Linear(hidden_size, 1)
+        })
+        self.lstm_yaw = nn.ModuleDict({
+            'lstm': nn.LSTM(
+                input_size=1,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True
+            ),
+            'linear': nn.Linear(hidden_size, 1)
+        })
 
     def forward(self, x):
-        ula, (h_out, _) = self.lstm(x)
+        x_val, y_val, yaw_val = split(x, 1, dim=-1)
 
-        h_out = h_out.view(-1, self.hidden_size)
+        x_val, _ = self.lstm_x['lstm'](x_val)
+        x_val = self.lstm_x['linear'](x_val)
+        x_val = x_val[:, -1, :]  # Select last time step
 
-        out = self.fc(h_out)
+        y_val, _ = self.lstm_y['lstm'](y_val)
+        y_val = self.lstm_y['linear'](y_val)
+        y_val = y_val[:, -1, :]
 
-        return out
-    
-    def train_loop(self, num_epochs, trainX, trainY, optimizer, criterion):
-        delta_list = []
-        for epoch in range(num_epochs):
-            outputs = self.forward(trainX)
-            optimizer.zero_grad()
+        yaw_val, _ = self.lstm_yaw['lstm'](yaw_val)
+        yaw_val = self.lstm_yaw['linear'](yaw_val)
+        yaw_val = yaw_val[:, -1, :]
 
-            # obtain the loss function
-            loss = criterion(outputs, trainY)
+        return cat([x_val, y_val, yaw_val], dim=-1)  # Shape: [batch_size, 3]
 
-            loss.backward()
-
-            optimizer.step()
-            if epoch % 100 == 0:
-                # delta = sum(abs(outputs - trainY)).item()
-                # delta_list.append(delta)
-                # print("Epoch: %d, loss: %1.5f, delta: %f" % (epoch, loss.item(), delta))
-                print("Epoch: %d, loss: %1.5f" % (epoch, loss.item()))
-        # print("Median delta: %f" % (np.median(delta_list)))
-
-    def test_loop(self, dataX, dataY, criterion):
-        # set model to evaluation mode
-        self.eval()
-
-        train_predict = self.forward(dataX)
-        mserror = criterion(train_predict, dataY)
-        print("MSE for val data: %1.5f" % (mserror.item()))
-        #print("Delta for val data: %f" % (sum(abs(train_predict - dataY))))
-
-        return train_predict
-
-        data_predict = train_predict.data.numpy()
-        dataY_plot = dataY.data.numpy()
-
-        # data_predict = sc.inverse_transform(data_predict)
-        # dataY_plot = sc.inverse_transform(dataY_plot)
-
-        plt.axvline(x=train_size, c='r', linestyle='--')
-
-        plt.plot(dataY_plot)
-        plt.plot(data_predict)
-        plt.suptitle('Time-Series Prediction')
-        plt.savefig('output_test.png')
-        plt.show()

@@ -10,6 +10,7 @@ from model import LSTM
 import argparse
 from scipy.interpolate import interp1d
 from torch.autograd import Variable
+from sklearn.preprocessing import MinMaxScaler
 
 def extract_data(bag_file_path):
     time_stamps = []
@@ -52,11 +53,6 @@ def compute_data(starting_position, imu_msgs, odom_timestamps):
     imu_y_list = []
     imu_heading_list = []
 
-    angular_velocity_z_list = []
-    linear_acceleration_x_list = []
-    linear_acceleration_y_list = []
-
-
     # Compute IMU-based trajectory
     for t, msg in imu_msgs:
         msg_sec = t.to_sec()
@@ -67,10 +63,6 @@ def compute_data(starting_position, imu_msgs, odom_timestamps):
         angular_velocity_z = msg.angular_velocity.z
         linear_acceleration_x = msg.linear_acceleration.x
         linear_acceleration_y = msg.linear_acceleration.y
-
-        angular_velocity_z_list.append(angular_velocity_z)
-        linear_acceleration_x_list.append(linear_acceleration_x)
-        linear_acceleration_y_list.append(linear_acceleration_y)
 
         current_heading += angular_velocity_z * dt
 
@@ -99,10 +91,6 @@ def compute_data(starting_position, imu_msgs, odom_timestamps):
     interp_x = interp1d(imu_time_np, imu_x_np, kind='linear', fill_value="extrapolate")
     interp_y = interp1d(imu_time_np, imu_y_np, kind='linear', fill_value="extrapolate")
     interp_heading = interp1d(imu_time_np, imu_heading_np, kind='linear', fill_value="extrapolate")
-    
-    interp_imu_angular = interp1d(imu_time_np, angular_velocity_z_list, kind='linear', fill_value="extrapolate")
-    interp_imu_x = interp1d(imu_time_np, linear_acceleration_x_list, kind='linear', fill_value="extrapolate")
-    interp_imu_y = interp1d(imu_time_np, linear_acceleration_y_list, kind='linear', fill_value="extrapolate")
 
     # Interpolate IMU data at odom timestamps
     angular_velocity_z_interp = []
@@ -114,23 +102,25 @@ def compute_data(starting_position, imu_msgs, odom_timestamps):
         y_values_IMU.append(interp_y(odom_time_sec))
         heading_values_IMU.append(interp_heading(odom_time_sec))
 
-        angular_velocity_z_interp.append(interp_imu_angular(odom_time_sec))
-        linear_acceleration_x_interp.append(interp_imu_x(odom_time_sec))
-        linear_acceleration_y_interp.append(interp_imu_y(odom_time_sec))
+    return x_values_IMU, y_values_IMU, heading_values_IMU
 
-    return x_values_IMU, y_values_IMU, heading_values_IMU, angular_velocity_z_interp, linear_acceleration_x_interp, linear_acceleration_y_interp
+def smooth(y, box_pts):
+    box = np.ones(box_pts)/box_pts
+    y_smooth = np.convolve(y, box, mode='same')
+    return y_smooth
 
-
-
-def plot_data(time_stamps, x_values, y_values, heading_values, filename):
+def plot_data(time_stamps, train_size, x_values, y_values, heading_values, filename):
     fig, ax = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
 
     # Convert datetime to numerical format for matplotlib
     time_stamps_num = date2num(time_stamps)
+    time_stamp_split = time_stamps_num[train_size]
 
     ax[0].plot(time_stamps_num, x_values[0], '-', label='x_gt')
     ax[0].plot(time_stamps_num, x_values[1], '-', label='x_pred_imu')
     ax[0].plot(time_stamps_num, x_values[2], '-', label='x_pred')
+    ax[0].plot(time_stamps_num, smooth(x_values[2], 5), '-', label='x_pred_smooth')
+    ax[0].axvline(x=time_stamp_split, c='r', linestyle='--')
     ax[0].set_ylabel('X Value')
     ax[0].grid(True)
     ax[0].legend()
@@ -138,6 +128,8 @@ def plot_data(time_stamps, x_values, y_values, heading_values, filename):
     ax[1].plot(time_stamps_num, y_values[0], '-', label='y_gt')
     ax[1].plot(time_stamps_num, y_values[1], '-', label='y_pred_imu')
     ax[1].plot(time_stamps_num, y_values[2], '-', label='y_pred')
+    ax[1].plot(time_stamps_num, smooth(y_values[2], 5), '-', label='y_pred_smooth')
+    ax[1].axvline(x=time_stamp_split, c='r', linestyle='--')
     ax[1].set_ylabel('Y Value')
     ax[1].grid(True)
     ax[1].legend()
@@ -145,6 +137,8 @@ def plot_data(time_stamps, x_values, y_values, heading_values, filename):
     ax[2].plot(time_stamps_num, heading_values[0], '-', label='yaw_gt')
     ax[2].plot(time_stamps_num, heading_values[1], '-', label='yaw_pred_imu')
     ax[2].plot(time_stamps_num, heading_values[2], '-', label='yaw_pred')
+    ax[2].plot(time_stamps_num, smooth(heading_values[2], 5), '-', label='yaw_pred_smooth')
+    ax[2].axvline(x=time_stamp_split, c='r', linestyle='--')
     ax[2].set_ylabel('Heading (rad)')
     ax[2].set_xlabel('Time')
     ax[2].grid(True)
@@ -155,11 +149,10 @@ def plot_data(time_stamps, x_values, y_values, heading_values, filename):
     plt.close()
 
 
-def prepare_data(odom_gt, imu_pred, imu, seq_length):
+def prepare_data(odom_gt, imu_pred, seq_length):
     gt_set, pred_set = [], []
     x_pred, y_pred, yaw_pred = imu_pred
     x_gt_set, y_gt_set, yaw_gt_set = odom_gt
-    x_imu, y_imu, yaw_imu = imu
     num_samples = len(x_gt_set)
 
     for i in range(num_samples - seq_length + 1):  # Ensure full sequence extraction
@@ -167,10 +160,6 @@ def prepare_data(odom_gt, imu_pred, imu, seq_length):
         x = x_pred[i:i+seq_length]
         y = y_pred[i:i+seq_length]
         yaw = yaw_pred[i:i+seq_length]
-
-        x_val_imu = x_imu[i:i+seq_length]
-        y_val_imu = y_imu[i:i+seq_length]
-        yaw_val_imu = yaw_imu[i:i+seq_length]
 
         # Stack predictions into shape (seq_length, 3)
         pred_window = np.stack([x, y, yaw], axis=-1)  # Shape: (seq_length, 6)
@@ -181,6 +170,48 @@ def prepare_data(odom_gt, imu_pred, imu, seq_length):
         gt_set.append([x_gt, y_gt, yaw_gt])  # Shape: (3,)
 
     return np.stack(pred_set), np.array(gt_set)
+
+def train(model, num_epochs, all_x, all_y, train_split, optimizer, criterion, lr_scheduler):
+    delta_list = []
+    best_loss = float('inf')
+    best_state_dict = None
+    for epoch in range(num_epochs):
+        total_loss = 0
+        for dataX, dataY in zip(all_x, all_y):
+            train_size = int(len(dataY) * train_split)
+            trainX, trainY = dataX[:train_size, :, :], dataY[:train_size, :]
+            outputs = model(trainX)
+            optimizer.zero_grad()
+
+            # obtain the loss function
+            loss = criterion(outputs, trainY)
+            total_loss += loss.item()
+
+            loss.backward()
+
+            optimizer.step()
+        if total_loss < best_loss:
+            best_loss = total_loss
+            best_state_dict = model.state_dict()
+        lr_scheduler.step()
+        if epoch % 100 == 0:
+            # delta = sum(abs(outputs - trainY)).item()
+            # delta_list.append(delta)
+            # print("Epoch: %d, loss: %1.5f, delta: %f" % (epoch, loss.item(), delta))
+            print("Epoch: %d, last_loss: %1.5f, lr: %f" % (epoch, total_loss, optimizer.param_groups[0]['lr']))
+    print("Best loss: %1.5f" % (best_loss))
+    model.load_state_dict(best_state_dict)
+    # print("Median delta: %f" % (np.median(delta_list)))
+
+def test(model, dataX, dataY, criterion):
+    # set model to evaluation mode
+    model.eval()
+
+    train_predict = model(dataX)
+    mserror = criterion(train_predict, dataY)
+    print("MSE for val data: %1.5f" % (mserror.item()))
+    #print("Delta for val data: %f" % (sum(abs(train_predict - dataY))))
+    return train_predict
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Plot x, y, and heading data from a ROS bag file.")
@@ -197,6 +228,8 @@ if __name__ == '__main__':
     all_imu_x, all_imu_y, all_imu_yaw = [], [], []
     all_x, all_y = [], []
 
+    list_scaler_x, list_scaler_y, list_scaler_yaw = [], [], []
+
     print("Extracting data from the bag file...")
     for bag_file_path in os.listdir(BAG_FOLDER_PATH):
         if not bag_file_path.endswith('.bag'):
@@ -208,16 +241,31 @@ if __name__ == '__main__':
         all_gt_y.append(y_gt)
         all_gt_yaw.append(yaw_gt)
         starting_position = {'x': x_gt[0], 'y': y_gt[0], 'heading': yaw_gt[0]}
-        x_pred_imu, y_pred_imu, yaw_pred_imu, yaw_imu, x_imu, y_imu = compute_data(starting_position, imu_msgs, time_stamps)
+        x_pred_imu, y_pred_imu, yaw_pred_imu = compute_data(starting_position, imu_msgs, time_stamps)
 
         all_imu_x.append(x_pred_imu)
         all_imu_y.append(y_pred_imu)
         all_imu_yaw.append(yaw_pred_imu)
 
+        scaler_x = MinMaxScaler()
+        scaler_y = MinMaxScaler()
+        scaler_yaw = MinMaxScaler()
+
+        x_gt = scaler_x.fit_transform(np.array(x_gt).reshape(-1, 1)).flatten()
+        y_gt = scaler_y.fit_transform(np.array(y_gt).reshape(-1, 1)).flatten()
+        yaw_gt = scaler_yaw.fit_transform(np.array(yaw_gt).reshape(-1, 1)).flatten()
+
+        x_pred_imu = scaler_x.transform(np.array(x_pred_imu).reshape(-1, 1)).flatten()
+        y_pred_imu = scaler_y.transform(np.array(y_pred_imu).reshape(-1, 1)).flatten()
+        yaw_pred_imu = scaler_yaw.transform(np.array(yaw_pred_imu).reshape(-1, 1)).flatten()
+
+        list_scaler_x.append(scaler_x)
+        list_scaler_y.append(scaler_y)
+        list_scaler_yaw.append(scaler_yaw)
+
         x, y = prepare_data(
             odom_gt=(x_gt, y_gt, yaw_gt),
             imu_pred=(x_pred_imu, y_pred_imu, yaw_pred_imu),
-            imu=(x_imu, y_imu, yaw_imu),
             seq_length=seq_length
         )
 
@@ -230,31 +278,26 @@ if __name__ == '__main__':
     # Combine datasets from all bags
     
 
-    train_size = int(len(dataY) * 0.67)
+    train_split = 0.8
 
     # training
-    num_iterations = 6
-    num_epochs = 4000
-    learning_rate = 0.008
+    num_epochs = 30000
+    learning_rate = 0.007
 
-    input_size = 3
-    hidden_size = 3
-    num_layers = 1
+    hidden_size = 10
+    num_layers = 3
 
-    output_size = 3
-
-    lstm = LSTM(output_size, input_size, hidden_size, num_layers)
+    lstm = LSTM(hidden_size, num_layers)
     lstm.to('cuda')
 
-    criterion = torch.nn.MSELoss(reduction='sum')
+    criterion = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(lstm.parameters(), lr=learning_rate)
+    # linear lr
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5000, gamma=0.7)
 
     if not MODEL:
         print("training the model...")
-        for _ in range(num_iterations):
-            for dataX, dataY in zip(all_x, all_y):
-                # trainX, trainY = dataX[:train_size], dataY[:train_size]
-                lstm.train_loop(num_epochs, dataX, dataY, optimizer, criterion)
+        train(lstm, num_epochs, all_x, all_y, train_split, optimizer, criterion, lr_scheduler)
         torch.save(lstm.state_dict(), 'model.pth')
         print("Training complete!")
     else:
@@ -264,7 +307,7 @@ if __name__ == '__main__':
     print("testing the model...")
     all_results = []
     for dataX, dataY in zip(all_x, all_y):
-        results = lstm.test_loop(dataX, dataY, criterion)
+        results = test(lstm, dataX, dataY, criterion)
         all_results.append(results)
 
     x_pred, y_pred, yaw_pred = [], [], []
@@ -279,8 +322,7 @@ if __name__ == '__main__':
     y_pred = np.pad(y_pred, (seq_length - 1, 0), 'edge')
     yaw_pred = np.pad(yaw_pred, (seq_length - 1, 0), 'edge')
 
-    start_idx = 0
-    for i, (x_gt, y_gt, yaw_gt, x_pred_imu, y_prend_imu, yaw_pred_imu, time_stamps, results) in enumerate(zip(all_gt_x, all_gt_y, all_gt_yaw, all_imu_x, all_imu_y, all_imu_yaw, all_time_stamps, all_results)):
+    for i, (x_gt, y_gt, yaw_gt, x_pred_imu, y_prend_imu, yaw_pred_imu, time_stamps, results, scaler_x, scaler_y, scaler_yaw) in enumerate(zip(all_gt_x, all_gt_y, all_gt_yaw, all_imu_x, all_imu_y, all_imu_yaw, all_time_stamps, all_results, list_scaler_x, list_scaler_y, list_scaler_yaw)):
         # Number of results corresponding to this bag
         num_samples = len(x_gt) - seq_length + 1
 
@@ -296,6 +338,10 @@ if __name__ == '__main__':
         x_pred = np.pad(x_pred, (seq_length - 1, 0), 'edge')
         y_pred = np.pad(y_pred, (seq_length - 1, 0), 'edge')
         yaw_pred = np.pad(yaw_pred, (seq_length - 1, 0), 'edge')
+        train_size = int(len(time_stamps) * train_split)
         
-        plot_data(time_stamps, [x_gt, x_pred_imu, x_pred], [y_gt, y_prend_imu, y_pred], [yaw_gt, yaw_pred_imu, yaw_pred], 'output_' + str(i) + '.png')
-        start_idx += num_samples
+        x_pred = scaler_x.inverse_transform(np.array(x_pred).reshape(-1, 1)).flatten()
+        y_pred = scaler_y.inverse_transform(np.array(y_pred).reshape(-1, 1)).flatten()
+        yaw_pred = scaler_yaw.inverse_transform(np.array(yaw_pred).reshape(-1, 1)).flatten()
+
+        plot_data(time_stamps, train_size, [x_gt, x_pred_imu, x_pred], [y_gt, y_prend_imu, y_pred], [yaw_gt, yaw_pred_imu, yaw_pred], 'output_' + str(i) + '.png')
