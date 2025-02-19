@@ -114,35 +114,36 @@ def plot_data(time_stamps, train_size, x_values, y_values, heading_values, filen
 
     # Convert datetime to numerical format for matplotlib
     time_stamps_num = date2num(time_stamps)
-    time_stamp_split = time_stamps_num[train_size]
+    time_stamp_split = time_stamps_num[train_size] if train_size > 0 else None
 
-    ax[0].plot(time_stamps_num, x_values[0], '-', label='x_gt')
-    ax[0].plot(time_stamps_num, x_values[1], '-', label='x_pred_imu')
-    ax[0].plot(time_stamps_num, x_values[2], '-', label='x_pred')
-    ax[0].plot(time_stamps_num, smooth(x_values[2], 5), '-', label='x_pred_smooth')
-    ax[0].axvline(x=time_stamp_split, c='r', linestyle='--')
+    ax[0].plot(time_stamps_num, x_values[0], '-', label='gt')
+    ax[0].plot(time_stamps_num, x_values[1], '-', label='compuuted_imu')
+    # ax[0].plot(time_stamps_num, x_values[2], '-', label='x_pred')
+    ax[0].plot(time_stamps_num, smooth(x_values[2], 30), '-', label='predicted_smoothed')
+    if time_stamp_split:
+        ax[0].axvline(x=time_stamp_split, c='r', linestyle='--')
     ax[0].set_ylabel('X Value')
     ax[0].grid(True)
     ax[0].legend()
 
     ax[1].plot(time_stamps_num, y_values[0], '-', label='y_gt')
     ax[1].plot(time_stamps_num, y_values[1], '-', label='y_pred_imu')
-    ax[1].plot(time_stamps_num, y_values[2], '-', label='y_pred')
-    ax[1].plot(time_stamps_num, smooth(y_values[2], 5), '-', label='y_pred_smooth')
-    ax[1].axvline(x=time_stamp_split, c='r', linestyle='--')
+    # ax[1].plot(time_stamps_num, y_values[2], '-', label='y_pred')
+    ax[1].plot(time_stamps_num, smooth(y_values[2], 30), '-', label='y_pred_smooth')
+    if time_stamp_split:
+        ax[1].axvline(x=time_stamp_split, c='r', linestyle='--')
     ax[1].set_ylabel('Y Value')
     ax[1].grid(True)
-    ax[1].legend()
 
     ax[2].plot(time_stamps_num, heading_values[0], '-', label='yaw_gt')
     ax[2].plot(time_stamps_num, heading_values[1], '-', label='yaw_pred_imu')
-    ax[2].plot(time_stamps_num, heading_values[2], '-', label='yaw_pred')
-    ax[2].plot(time_stamps_num, smooth(heading_values[2], 5), '-', label='yaw_pred_smooth')
-    ax[2].axvline(x=time_stamp_split, c='r', linestyle='--')
-    ax[2].set_ylabel('Heading (rad)')
+    # ax[2].plot(time_stamps_num, heading_values[2], '-', label='yaw_pred')
+    ax[2].plot(time_stamps_num, smooth(heading_values[2], 30), '-', label='yaw_pred_smooth')
+    if time_stamp_split:
+        ax[2].axvline(x=time_stamp_split, c='r', linestyle='--')
+    ax[2].set_ylabel('Yaw (rad)')
     ax[2].set_xlabel('Time')
     ax[2].grid(True)
-    ax[2].legend()
 
     plt.tight_layout()
     plt.savefig(filename)
@@ -201,7 +202,6 @@ def train(model, num_epochs, all_x, all_y, train_split, optimizer, criterion, lr
             print("Epoch: %d, last_loss: %1.5f, lr: %f" % (epoch, total_loss, optimizer.param_groups[0]['lr']))
     print("Best loss: %1.5f" % (best_loss))
     model.load_state_dict(best_state_dict)
-    # print("Median delta: %f" % (np.median(delta_list)))
 
 def test(model, dataX, dataY, criterion):
     # set model to evaluation mode
@@ -301,6 +301,7 @@ if __name__ == '__main__':
         torch.save(lstm.state_dict(), 'model.pth')
         print("Training complete!")
     else:
+        train_split = 0
         lstm.load_state_dict(torch.load(MODEL))
 
     # testing
