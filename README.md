@@ -88,4 +88,5 @@ $ catkin_make
 $ source devel/setup.bash
 $ export TURTLEBOT3_MODEL=burger
 $ roslaunch ros_wrapper ros_wrapper.launch
+$ rosrun ros_wrapper ai_classifier_node.py # in another terminal
 ```
