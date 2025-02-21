@@ -1,0 +1,8 @@
+<launch>
+    <!-- Launch TurtleBot3 simulation -->
+    <include file="$(find turtlebot3_gazebo)/launch/turtlebot3_world.launch"/>
+    <include file="$(find turtlebot3_navigation)/launch/turtlebot3_navigation.launch"/>
+
+    <node name="logger" pkg="ros_wrapper" type="logger.py" output="screen"/>
+    <node name="turtlebot3_waypoints" pkg="ros_wrapper" type="turtlebot3_waypoints.py" output="screen"/>
+</launch>

@@ -35,8 +35,8 @@ $ source devel/setup.bash
 to create the package
 ```bash
 $ cd src
-$ catkin_create_pkg state_estimation_logger rospy std_msgs sensor_msgs nav_msgs geometry_msgs
-$ cd state_estimation_logger
+$ catkin_create_pkg ros_wrapper rospy std_msgs sensor_msgs nav_msgs geometry_msgs cv_bridge
+$ cd ros_wrapper
 $ mkdir scripts
 ```
 copy the wrapper file that should be used in ROS with all the other dependecies (in my case the logger.py file is sufficient) in the scripts folder
@@ -62,20 +62,30 @@ create a launch file for the package
 ```bash
 $ mkdir launch
 ```
-create a logger.launch file an put those lines inside
+create a ros_wrapper.launch file an put those lines inside
 ```bash
 <launch>
     <!-- Launch TurtleBot3 simulation -->
     <include file="$(find turtlebot3_gazebo)/launch/turtlebot3_world.launch"/>
+    <include file="$(find turtlebot3_navigation)/launch/turtlebot3_navigation.launch"/>
 
-    <!-- Launch the custom logging node -->
-    <node name="logger" pkg="state_estimation_logger" type="logger.py" output="screen"/>
+    <node name="logger" pkg="ros_wrapper" type="logger.py" output="screen"/>
+    <node name="turtlebot3_waypoints" pkg="ros_wrapper" type="turtlebot3_waypoints.py" output="screen"/>
 </launch>
 ```
 
 execute catkin_make again from the root of the ros workspace
 then use the command:
 ```bash
-$ roslaunch state_estimation_logger logger.launch
+$ roslaunch ros_wrapper ros_wrapper.launch
 ```
 to launch the simulation
+
+# to run the simulation
+```bash
+$ cd ros_workspace
+$ catkin_make
+$ source devel/setup.bash
+$ export TURTLEBOT3_MODEL=burger
+$ roslaunch ros_wrapper ros_wrapper.launch
+```

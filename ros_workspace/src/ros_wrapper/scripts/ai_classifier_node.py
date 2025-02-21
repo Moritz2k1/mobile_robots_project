@@ -52,7 +52,7 @@ class ImageClassifierNode:
         model.fc = nn.Linear(num_ftrs, num_classes)
         
         # Load the trained model weights.
-        default_path = "/home/moritz/ros_workspace/src/ai_classifier_node/model.pt"
+        default_path = "./model.pt"
         model_path = rospy.get_param("~model_path", default_path)
         model_path = os.path.expanduser(model_path)  # Expand '~'
         try:
