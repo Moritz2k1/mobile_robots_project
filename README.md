@@ -21,3 +21,61 @@
      * Time without crashing
    * Time without crashing:
      * Precision and recall
+
+## creating the ros workspace
+to create the ros workspace
+```bash
+$ mkdir ros_workspace
+$ cd ros_workspace
+$ mkdir src
+$ catkin_make
+$ source devel/setup.bash
+```
+
+to create the package
+```bash
+$ cd src
+$ catkin_create_pkg state_estimation_logger rospy std_msgs sensor_msgs nav_msgs geometry_msgs
+$ cd state_estimation_logger
+$ mkdir scripts
+```
+copy the wrapper file that should be used in ROS with all the other dependecies (in my case the logger.py file is sufficient) in the scripts folder
+
+update CMakeLists.txt in my_turtlebot_logger by adding this line
+```bash
+catkin_install_python(PROGRAMS
+  scripts/logger.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+```
+
+Add dependencies to the package.xml (if needed)
+```bash
+<depend>rospy</depend>
+<depend>std_msgs</depend>
+<depend>sensor_msgs</depend>
+<depend>nav_msgs</depend>
+<depend>geometry_msgs</depend>
+```
+
+create a launch file for the package 
+```bash
+$ mkdir launch
+```
+create a logger.launch file an put those lines inside
+```bash
+<launch>
+    <!-- Launch TurtleBot3 simulation -->
+    <include file="$(find turtlebot3_gazebo)/launch/turtlebot3_world.launch"/>
+
+    <!-- Launch the custom logging node -->
+    <node name="logger" pkg="state_estimation_logger" type="logger.py" output="screen"/>
+</launch>
+```
+
+execute catkin_make again from the root of the ros workspace
+then use the command:
+```bash
+$ roslaunch state_estimation_logger logger.launch
+```
+to launch the simulation

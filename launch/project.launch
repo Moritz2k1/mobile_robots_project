@@ -1,3 +1,0 @@
-<launch>
-  <node name="state_estimation_record" pkg="state_estimation" type="ros_entry.py" output="screen"></node>
-</launch>

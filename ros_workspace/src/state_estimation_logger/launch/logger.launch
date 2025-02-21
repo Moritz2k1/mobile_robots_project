@@ -1,0 +1,7 @@
+<launch>
+    <!-- Launch TurtleBot3 simulation -->
+    <include file="$(find turtlebot3_gazebo)/launch/turtlebot3_world.launch"/>
+
+    <!-- Launch the custom logging node -->
+    <node name="logger" pkg="state_estimation_logger" type="logger.py" output="screen"/>
+</launch>
